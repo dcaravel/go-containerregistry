@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 type catalog struct {
@@ -41,6 +42,7 @@ type manifests struct {
 	manifests map[string]map[string]manifest
 	lock      sync.RWMutex
 	log       *log.Logger
+	handlers  []manifestHandler
 }
 
 func isManifest(req *http.Request) bool {
@@ -89,34 +91,19 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 	target := elem[len(elem)-1]
 	repo := strings.Join(elem[1:len(elem)-2], "/")
 
-	fmt.Printf("Target: %v\n", target)
-	fmt.Printf("Repo: %v\n", repo)
-
-	if target == "403" {
-		return &regError{
-			Status:  http.StatusForbidden,
-			Code:    "FORBIDDEN",
-			Message: "Fakereg: Access to this resource is forbidden",
-		}
-	}
-
 	switch req.Method {
 	case http.MethodGet:
 		m.lock.RLock()
 		defer m.lock.RUnlock()
 
-		m.handleRequest(repo, target)
-
-		resp.WriteHeader(http.StatusOK)
+		m.handleRequest(resp, req, repo, target)
 		return nil
 
 	case http.MethodHead:
 		m.lock.RLock()
 		defer m.lock.RUnlock()
 
-		m.handleRequest(repo, target)
-
-		resp.WriteHeader(http.StatusOK)
+		m.handleRequest(resp, req, repo, target)
 		return nil
 
 	case http.MethodPut:
@@ -142,6 +129,95 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 	}
 }
 
-func (m *manifests) handleRequest(repo string, target string) {
-	m.log.Printf("Got request for %v:%v", repo, target)
+func (m *manifests) handleRequest(resp http.ResponseWriter, req *http.Request, repo, target string) {
+	for _, handler := range m.handlers {
+		if handler.Handle(resp, req, repo, target) {
+			// If the request was handled, stop processing handlers
+			return
+		}
+	}
+}
+
+type manifestHandler interface {
+	// Handle returns true if it handled the request
+	Handle(resp http.ResponseWriter, req *http.Request, repo, target string) bool
+}
+
+type errorManifestHandler struct {
+	Repo string
+}
+
+func (h *errorManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string) bool {
+	if repo != h.Repo {
+		return false
+	}
+
+	switch target {
+	case "400":
+		WriteErr(resp, http.StatusBadRequest, "MANIFEST_INVALID", "Eww! That request looks bad, very bad... just awful.")
+	case "403":
+		WriteErr(resp, http.StatusForbidden, "FORBIDDEN", "Fakereg: Access to this resource is forbidden")
+	case "404":
+		WriteErr(resp, http.StatusNotFound, "MANIFEST_UNKNOWN", "Looking for something?")
+	case "405":
+		WriteErr(resp, http.StatusMethodNotAllowed, "UNAUTHORIZED", "Method not allowed")
+	case "500":
+		WriteErr(resp, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "Working as intended... probably...")
+	default:
+		return false
+	}
+
+	return true
+}
+
+const (
+	DurPrefix = "dur-"
+)
+
+func extractKVFromTag(tag string) map[string]string {
+	values := map[string]string{}
+	allSplit := strings.Split(tag, "_") // underscore separates sets of key/value
+	for _, kv := range allSplit {
+		kvSplit := strings.Split(kv, "-") // dash separates key/value
+		if len(kvSplit) < 2 {
+			continue
+		}
+		k := kvSplit[0]
+		v := kvSplit[1]
+		values[k] = v
+	}
+
+	return values
+}
+
+type timeoutManifestHandler struct {
+	Repo string
+}
+
+func (h *timeoutManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string) bool {
+	if repo != h.Repo {
+		return false
+	}
+
+	kv := extractKVFromTag(target)
+
+	durStr, ok := kv["dur"]
+	if !ok {
+		WriteErr(resp, http.StatusBadRequest, "MANIFEST_INVALID", "Tag missing duration")
+		return true
+	}
+
+	dur, err := time.ParseDuration(durStr)
+	if err != nil {
+		msg := fmt.Sprintf("error parsing duration: %v", err)
+		WriteErr(resp, http.StatusBadRequest, "MANIFEST_INVALID", msg)
+		return true
+	}
+
+	log.Printf("Sleeping %q for %v", req.URL.Path, dur)
+	time.Sleep(dur)
+
+	WriteErr(resp, http.StatusRequestTimeout, "TIMEOUT", "Timeout duration has elapsed!")
+
+	return true
 }

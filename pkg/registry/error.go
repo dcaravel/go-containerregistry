@@ -25,6 +25,16 @@ type regError struct {
 	Message string
 }
 
+func WriteErr(resp http.ResponseWriter, status int, code, msg string) error {
+	rerr := &regError{
+		Status:  status,
+		Code:    code,
+		Message: msg,
+	}
+
+	return rerr.Write(resp)
+}
+
 func (r *regError) Write(resp http.ResponseWriter) error {
 	resp.WriteHeader(r.Status)
 

@@ -49,6 +49,7 @@ type manifests struct {
 	manifests map[string]map[string]manifest
 	lock      sync.RWMutex
 	log       *log.Logger
+	hookFn    hookFunc
 }
 
 func isManifest(req *http.Request) bool {
@@ -96,6 +97,10 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 	elem = elem[1:]
 	target := elem[len(elem)-1]
 	repo := strings.Join(elem[1:len(elem)-2], "/")
+
+	if m.hookFn(resp, req, repo, target) {
+		return nil
+	}
 
 	switch req.Method {
 	case http.MethodGet:

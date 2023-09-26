@@ -31,6 +31,10 @@ import (
 	"os"
 )
 
+const (
+	RepoPrefix = "broken"
+)
+
 type registry struct {
 	log              *log.Logger
 	referrersEnabled bool
@@ -99,6 +103,10 @@ func New(opts ...Option) http.Handler {
 		manifests: manifests{
 			manifests: map[string]map[string]manifest{},
 			log:       log.New(os.Stderr, "", log.LstdFlags),
+			handlers: []manifestHandler{
+				&errorManifestHandler{Repo: fmt.Sprintf("%s/error", RepoPrefix)},
+				&timeoutManifestHandler{Repo: fmt.Sprintf("%s/timeout", RepoPrefix)},
+			},
 		},
 	}
 	for _, o := range opts {

@@ -29,6 +29,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type registry struct {
@@ -79,12 +80,24 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 }
 
 func (r *registry) root(resp http.ResponseWriter, req *http.Request) {
-	if rerr := r.v2(resp, req); rerr != nil {
-		r.log.Printf("%s %s %d %s %s", req.Method, req.URL, rerr.Status, rerr.Code, rerr.Message)
-		rerr.Write(resp)
+	if strings.HasPrefix(req.URL.Path, "/v2") {
+		if rerr := r.v2(resp, req); rerr != nil {
+			r.log.Printf("%s %s %d %s %s", req.Method, req.URL, rerr.Status, rerr.Code, rerr.Message)
+			rerr.Write(resp)
+			return
+		}
+		r.log.Printf("%s %s", req.Method, req.URL)
 		return
 	}
-	r.log.Printf("%s %s", req.Method, req.URL)
+
+	// other endpoints
+	rerr := &regError{
+		Status:  http.StatusNotFound,
+		Code:    "WAT_IS_THIS?",
+		Message: "The thing you requested is not implemented",
+	}
+	r.log.Printf("%s %s %d %s %s", req.Method, req.URL, rerr.Status, rerr.Code, rerr.Message)
+	rerr.Write(resp)
 }
 
 // New returns a handler which implements the docker registry protocol.
@@ -140,5 +153,14 @@ func WithWarning(prob float64, msg string) Option {
 func WithBlobHandler(h BlobHandler) Option {
 	return func(r *registry) {
 		r.blobs.blobHandler = h
+	}
+}
+
+// hookFunc returns true if the request was handled, false otherwise
+type hookFunc = func(resp http.ResponseWriter, req *http.Request, repo, target string) bool
+
+func WithManifestHook(f hookFunc) Option {
+	return func(r *registry) {
+		r.manifests.hookFn = f
 	}
 }

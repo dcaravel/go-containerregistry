@@ -108,7 +108,7 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 		return nil
 
 	case http.MethodPut:
-		if repo != "broken/prepared" {
+		if !strings.HasPrefix(repo, "broken/prepared") {
 			return &regError{
 				Status:  http.StatusNotImplemented,
 				Code:    "NOT_IMPLEMENTED",

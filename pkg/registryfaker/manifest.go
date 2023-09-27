@@ -15,12 +15,24 @@
 package registryfaker
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"log"
+	"math/rand"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/random"
+)
+
+var (
+	EmptyManifest = manifest{}
 )
 
 type catalog struct {
@@ -39,10 +51,11 @@ type manifest struct {
 
 type manifests struct {
 	// maps repo -> manifest tag/digest -> manifest
-	manifests map[string]map[string]manifest
-	lock      sync.RWMutex
-	log       *log.Logger
-	handlers  []manifestHandler
+	manifests   map[string]map[string]manifest
+	lock        sync.RWMutex
+	log         *log.Logger
+	handlers    []manifestHandler
+	blobHandler BlobHandler
 }
 
 func isManifest(req *http.Request) bool {
@@ -93,16 +106,10 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 
 	switch req.Method {
 	case http.MethodGet:
-		m.lock.RLock()
-		defer m.lock.RUnlock()
-
 		m.handleRequest(resp, req, repo, target)
 		return nil
 
 	case http.MethodHead:
-		m.lock.RLock()
-		defer m.lock.RUnlock()
-
 		m.handleRequest(resp, req, repo, target)
 		return nil
 
@@ -131,23 +138,66 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 
 func (m *manifests) handleRequest(resp http.ResponseWriter, req *http.Request, repo, target string) {
 	for _, handler := range m.handlers {
-		if handler.Handle(resp, req, repo, target) {
+		if handler.Handle(resp, req, repo, target, m, m.blobHandler) {
 			// If the request was handled, stop processing handlers
 			return
 		}
 	}
 }
 
-type manifestHandler interface {
-	// Handle returns true if it handled the request
-	Handle(resp http.ResponseWriter, req *http.Request, repo, target string) bool
+func (m *manifests) PutManifest(repo, digest, tag string, mf manifest) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if _, ok := m.manifests[repo]; !ok {
+		m.manifests[repo] = make(map[string]manifest, 2)
+	}
+
+	m.manifests[repo][digest] = mf
+	m.manifests[repo][tag] = mf
+
+	log.Printf("manifest upserted %v %v", repo, digest)
 }
 
+func (m *manifests) GetManifest(repo, digest string) (manifest, *regError) {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+
+	c, ok := m.manifests[repo]
+	if !ok {
+		return EmptyManifest, &regError{
+			Status:  http.StatusNotFound,
+			Code:    "NAME_UNKNOWN",
+			Message: "Unknown name",
+		}
+	}
+
+	mf, ok := c[digest]
+	if !ok {
+		return EmptyManifest, &regError{
+			Status:  http.StatusNotFound,
+			Code:    "MANIFEST_UNKNOWN",
+			Message: "Unknown manifest",
+		}
+	}
+
+	return mf, nil
+}
+
+type manifestHandler interface {
+	// Handle returns true if it handled the request
+	Handle(resp http.ResponseWriter, req *http.Request, repo, target string, mAccessor manifestAccessor, blobHandler BlobHandler) bool
+}
+
+type manifestAccessor interface {
+	PutManifest(repo, digest, tag string, manifest manifest)
+	GetManifest(repo, digest string) (manifest, *regError)
+}
 type errorManifestHandler struct {
 	Repo string
 }
 
-func (h *errorManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string) bool {
+func (h *errorManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string, _ manifestAccessor, blobHandler BlobHandler) bool {
 	if repo != h.Repo {
 		return false
 	}
@@ -164,37 +214,17 @@ func (h *errorManifestHandler) Handle(resp http.ResponseWriter, req *http.Reques
 	case "500":
 		WriteErr(resp, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "Working as intended... probably...")
 	default:
-		return false
+		WriteErr(resp, http.StatusNotImplemented, "NOT_IMPLEMENTED", "Huh?")
 	}
 
 	return true
-}
-
-const (
-	DurPrefix = "dur-"
-)
-
-func extractKVFromTag(tag string) map[string]string {
-	values := map[string]string{}
-	allSplit := strings.Split(tag, "_") // underscore separates sets of key/value
-	for _, kv := range allSplit {
-		kvSplit := strings.Split(kv, "-") // dash separates key/value
-		if len(kvSplit) < 2 {
-			continue
-		}
-		k := kvSplit[0]
-		v := kvSplit[1]
-		values[k] = v
-	}
-
-	return values
 }
 
 type timeoutManifestHandler struct {
 	Repo string
 }
 
-func (h *timeoutManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string) bool {
+func (h *timeoutManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string, _ manifestAccessor, blobHandler BlobHandler) bool {
 	if repo != h.Repo {
 		return false
 	}
@@ -220,4 +250,166 @@ func (h *timeoutManifestHandler) Handle(resp http.ResponseWriter, req *http.Requ
 	WriteErr(resp, http.StatusRequestTimeout, "TIMEOUT", "Timeout duration has elapsed!")
 
 	return true
+}
+
+type randomManifestHandler struct {
+	Repo string
+}
+
+func (h *randomManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string, mAccessor manifestAccessor, blobHandler BlobHandler) bool {
+	if repo != h.Repo {
+		return false
+	}
+
+	// Check the storage/cache for the manifest
+	mf, rerr := mAccessor.GetManifest(repo, target)
+	if rerr != nil {
+		if isDigest(target) {
+			rerr.Write(resp)
+			return true
+		}
+	} else {
+		// if we didn't get an error, that means a manifest was found
+		hash, _, _ := v1.SHA256(bytes.NewReader(mf.blob))
+		resp.Header().Set("Docker-Content-Digest", hash.String())
+		resp.Header().Set("Content-Type", mf.contentType)
+		resp.Header().Set("Content-Length", fmt.Sprint(len(mf.blob)))
+		resp.WriteHeader(http.StatusOK)
+		io.Copy(resp, bytes.NewReader(mf.blob))
+
+		return true
+	}
+
+	kv := extractKVFromTag(target)
+	layersRaw, ok := kv["layers"]
+	if !ok {
+		WriteErr(resp, http.StatusBadRequest, "BAD_REQUEST", "tag missing num layers")
+		return true
+	}
+
+	sizeRaw, ok := kv["size"]
+	if !ok {
+		WriteErr(resp, http.StatusBadRequest, "BAD_REQUEST", "tag missing layer size")
+		return true
+	}
+
+	seedRaw, ok := kv["seed"]
+	if !ok {
+		seedRaw = "0"
+	}
+
+	// imagesRaw, ok := kv["images"]
+	// if !ok {
+	// 	WriteErr(resp, http.StatusBadRequest, "BAD_REQUEST", "tag missing layer size")
+	// 	return true
+	// }
+
+	numLayers, err := strconv.ParseInt(layersRaw, 10, 64)
+	if err != nil {
+		// default num layers
+		numLayers = 1
+	}
+
+	layerSize, err := strconv.ParseInt(sizeRaw, 10, 64)
+	if err != nil {
+		// default num layers
+		layerSize = 1024
+	}
+
+	seed, err := strconv.ParseInt(seedRaw, 10, 64)
+	if err != nil {
+		// default seed num
+		seed = 0
+	}
+
+	img, err := random.Image(layerSize, numLayers, random.WithSource(rand.NewSource(seed)))
+	if err != nil {
+		regErrInternal(err).Write(resp)
+		return true
+	}
+
+	manifestRaw, err := img.RawManifest()
+	if err != nil {
+		regErrInternal(err).Write(resp)
+		return true
+	}
+
+	mtype, err := img.MediaType()
+	if err != nil {
+		regErrInternal(err).Write(resp)
+		return true
+	}
+
+	mf = manifest{
+		blob:        manifestRaw,
+		contentType: string(mtype),
+	}
+
+	// manifest, _ := img.Manifest()
+	// indent, _ := json.MarshalIndent(manifest, "", "  ")
+	// log.Printf("manifest: %s\n", indent)
+
+	// config, _ := img.ConfigFile()
+	// indent, _ = json.MarshalIndent(config, "", "  ")
+	// log.Printf("config: %s\n", indent)
+
+	hash, _, _ := v1.SHA256(bytes.NewReader(manifestRaw))
+	mAccessor.PutManifest(repo, hash.String(), target, mf)
+
+	bph := blobHandler.(BlobPutHandler)
+
+	// Put the image 'config' into blobs
+	configHash, err := img.ConfigName()
+	if err != nil {
+		regErrInternal(err).Write(resp)
+		return true
+	}
+
+	configBytes, err := img.RawConfigFile()
+	if err != nil {
+		regErrInternal(err).Write(resp)
+		return true
+	}
+
+	err = bph.Put(context.Background(), repo, configHash, io.NopCloser(bytes.NewReader(configBytes)))
+	if err != nil {
+		regErrInternal(err).Write(resp)
+		return true
+	}
+
+	// Put the image layers into blobs
+	layers, _ := img.Layers()
+	for _, layer := range layers {
+		hash, err := layer.Digest()
+		if err != nil {
+			regErrInternal(err).Write(resp)
+			return true
+		}
+
+		reader, err := layer.Compressed()
+		if err != nil {
+			regErrInternal(err).Write(resp)
+			return true
+		}
+
+		err = bph.Put(context.Background(), repo, hash, reader)
+		if err != nil {
+			regErrInternal(err).Write(resp)
+			return true
+		}
+	}
+
+	// Respond with the image's info
+	resp.Header().Set("Docker-Content-Digest", hash.String())
+	resp.Header().Set("Content-Type", string(mtype))
+	resp.Header().Set("Content-Length", fmt.Sprint(len(manifestRaw)))
+	resp.WriteHeader(http.StatusOK)
+
+	if req.Method == "GET" {
+		// May not ever get here if ever GET is preceded by a HEAD
+		io.Copy(resp, bytes.NewReader(manifestRaw))
+		return true
+	}
+
+	return false
 }

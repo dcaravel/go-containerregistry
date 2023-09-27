@@ -38,6 +38,7 @@ const (
 type registry struct {
 	log              *log.Logger
 	referrersEnabled bool
+	blobs            blobs
 	manifests        manifests
 	warnings         map[float64]string
 }
@@ -54,9 +55,9 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 		}
 	}
 
-	// if isBlob(req) {
-	// 	return r.blobs.handle(resp, req)
-	// }
+	if isBlob(req) {
+		return r.blobs.handle(resp, req)
+	}
 	if isManifest(req) {
 		return r.manifests.handle(resp, req)
 	}
@@ -93,22 +94,27 @@ func (r *registry) root(resp http.ResponseWriter, req *http.Request) {
 // New returns a handler which implements the docker registry protocol.
 // It should be registered at the site root.
 func New(opts ...Option) http.Handler {
+	blobHandler := &memHandler{m: map[string][]byte{}}
+
 	r := &registry{
 		log: log.New(os.Stderr, "", log.LstdFlags),
-		// blobs: blobs{
-		// 	blobHandler: &memHandler{m: map[string][]byte{}},
-		// 	uploads:     map[string][]byte{},
-		// 	log:         log.New(os.Stderr, "", log.LstdFlags),
-		// },
+		blobs: blobs{
+			blobHandler: blobHandler,
+			uploads:     map[string][]byte{},
+			log:         log.New(os.Stderr, "", log.LstdFlags),
+		},
 		manifests: manifests{
-			manifests: map[string]map[string]manifest{},
-			log:       log.New(os.Stderr, "", log.LstdFlags),
+			manifests:   map[string]map[string]manifest{},
+			log:         log.New(os.Stderr, "", log.LstdFlags),
+			blobHandler: blobHandler,
 			handlers: []manifestHandler{
 				&errorManifestHandler{Repo: fmt.Sprintf("%s/error", RepoPrefix)},
 				&timeoutManifestHandler{Repo: fmt.Sprintf("%s/timeout", RepoPrefix)},
+				&randomManifestHandler{Repo: fmt.Sprintf("%s/random", RepoPrefix)},
 			},
 		},
 	}
+
 	for _, o := range opts {
 		o(r)
 	}
@@ -144,8 +150,9 @@ func WithWarning(prob float64, msg string) Option {
 	}
 }
 
-// func WithBlobHandler(h BlobHandler) Option {
-// 	return func(r *registry) {
-// 		// r.blobs.blobHandler = h
-// 	}
-// }
+func WithBlobHandler(h BlobHandler) Option {
+	return func(r *registry) {
+		r.blobs.blobHandler = h
+		r.manifests.blobHandler = h
+	}
+}

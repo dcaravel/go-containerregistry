@@ -14,7 +14,6 @@ type preparedManifestHandler struct {
 }
 
 func (h *preparedManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string, mAccessor manifestAccessor, blobHandler BlobHandler) bool {
-	fmt.Println("In preparedManifestHandler")
 	if repo != h.Repo {
 		return false
 	}

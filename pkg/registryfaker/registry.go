@@ -112,6 +112,7 @@ func New(opts ...Option) http.Handler {
 				&timeoutManifestHandler{Repo: fmt.Sprintf("%s/timeout", RepoPrefix)},
 				&randomManifestHandler{Repo: fmt.Sprintf("%s/random", RepoPrefix)},
 				&preparedManifestHandler{Repo: fmt.Sprintf("%s/prepared", RepoPrefix)},
+				&remoteManifestHandler{Repo: "*"}, // ALWAYS keep this handler last, it's a match any
 			},
 		},
 	}

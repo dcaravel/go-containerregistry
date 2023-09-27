@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -18,7 +19,7 @@ type remoteManifestHandler struct {
 }
 
 func (h *remoteManifestHandler) Handle(resp http.ResponseWriter, req *http.Request, repo, target string, mAccessor manifestAccessor, blobHandler BlobHandler) bool {
-	fmt.Printf("Serving quay.io/%s/%s\n", repo, target)
+	fmt.Printf("Serving %s:%s\n", repo, target)
 
 	// Check storage for manifest
 	mf, err := mAccessor.GetManifest(repo, target)
@@ -55,7 +56,7 @@ func pullAndSaveImage(repo string, target string, mAccessor manifestAccessor, bh
 	if err != nil {
 		return nil, errors.Wrap(err, "Fatal error parsing ref")
 	}
-	img, err := remote.Image(ref)
+	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
 		return nil, errors.Wrapf(err, "Fatal error pulling image %s:%s from quay.io\n", repo, target)
 	}

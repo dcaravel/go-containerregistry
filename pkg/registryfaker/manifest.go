@@ -25,14 +25,14 @@ var (
 	EmptyManifest = manifest{}
 )
 
-type catalog struct {
-	Repos []string `json:"repositories"`
-}
+// type catalog struct {
+// 	Repos []string `json:"repositories"`
+// }
 
-type listTags struct {
-	Name string   `json:"name"`
-	Tags []string `json:"tags"`
-}
+// type listTags struct {
+// 	Name string   `json:"name"`
+// 	Tags []string `json:"tags"`
+// }
 
 type manifest struct {
 	contentType string
@@ -57,34 +57,34 @@ func isManifest(req *http.Request) bool {
 	return elems[len(elems)-2] == "manifests"
 }
 
-func isTags(req *http.Request) bool {
-	elems := strings.Split(req.URL.Path, "/")
-	elems = elems[1:]
-	if len(elems) < 4 {
-		return false
-	}
-	return elems[len(elems)-2] == "tags"
-}
+// func isTags(req *http.Request) bool {
+// 	elems := strings.Split(req.URL.Path, "/")
+// 	elems = elems[1:]
+// 	if len(elems) < 4 {
+// 		return false
+// 	}
+// 	return elems[len(elems)-2] == "tags"
+// }
 
-func isCatalog(req *http.Request) bool {
-	elems := strings.Split(req.URL.Path, "/")
-	elems = elems[1:]
-	if len(elems) < 2 {
-		return false
-	}
+// func isCatalog(req *http.Request) bool {
+// 	elems := strings.Split(req.URL.Path, "/")
+// 	elems = elems[1:]
+// 	if len(elems) < 2 {
+// 		return false
+// 	}
 
-	return elems[len(elems)-1] == "_catalog"
-}
+// 	return elems[len(elems)-1] == "_catalog"
+// }
 
 // Returns whether this url should be handled by the referrers handler
-func isReferrers(req *http.Request) bool {
-	elems := strings.Split(req.URL.Path, "/")
-	elems = elems[1:]
-	if len(elems) < 4 {
-		return false
-	}
-	return elems[len(elems)-2] == "referrers"
-}
+// func isReferrers(req *http.Request) bool {
+// 	elems := strings.Split(req.URL.Path, "/")
+// 	elems = elems[1:]
+// 	if len(elems) < 4 {
+// 		return false
+// 	}
+// 	return elems[len(elems)-2] == "referrers"
+// }
 
 // https://github.com/opencontainers/distribution-spec/blob/master/spec.md#pulling-an-image-manifest
 // https://github.com/opencontainers/distribution-spec/blob/master/spec.md#pushing-an-image

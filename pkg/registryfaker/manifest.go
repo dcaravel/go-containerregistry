@@ -15,10 +15,14 @@
 package registryfaker
 
 import (
+	"bytes"
+	"io"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 var (
@@ -104,11 +108,32 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 		return nil
 
 	case http.MethodPut:
-		return &regError{
-			Status:  http.StatusNotImplemented,
-			Code:    "NOT_IMPLEMENTED",
-			Message: "Method not implemented",
+		if repo != "broken/prepared" {
+			return &regError{
+				Status:  http.StatusNotImplemented,
+				Code:    "NOT_IMPLEMENTED",
+				Message: "Method not implemented",
+			}
 		}
+		b := &bytes.Buffer{}
+		io.Copy(b, req.Body)
+		h, _, _ := v1.SHA256(bytes.NewReader(b.Bytes()))
+		digest := h.String()
+		mf := manifest{
+			blob:        b.Bytes(),
+			contentType: req.Header.Get("Content-Type"),
+		}
+		m.lock.Lock()
+		defer m.lock.Unlock()
+
+		if _, ok := m.manifests[repo]; !ok {
+			m.manifests[repo] = make(map[string]manifest, 2)
+		}
+		m.manifests[repo][digest] = mf
+		m.manifests[repo][target] = mf
+		resp.Header().Set("Docker-Content-Digest", digest)
+		resp.WriteHeader(http.StatusCreated)
+		return nil
 
 	case http.MethodDelete:
 		return &regError{

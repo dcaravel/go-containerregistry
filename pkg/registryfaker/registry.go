@@ -111,6 +111,7 @@ func New(opts ...Option) http.Handler {
 				&errorManifestHandler{Repo: fmt.Sprintf("%s/error", RepoPrefix)},
 				&timeoutManifestHandler{Repo: fmt.Sprintf("%s/timeout", RepoPrefix)},
 				&randomManifestHandler{Repo: fmt.Sprintf("%s/random", RepoPrefix)},
+				&preparedManifestHandler{Repo: fmt.Sprintf("%s/prepared", RepoPrefix)},
 			},
 		},
 	}

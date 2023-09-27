@@ -15,6 +15,7 @@
 package authn
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -72,6 +73,8 @@ func (dk *defaultKeychain) Resolve(target Resource) (Authenticator, error) {
 	// If the Docker config file isn't found, we'll fallback to look where
 	// Podman configures it, and parse that as a Docker auth config instead.
 
+	fmt.Printf("Resolving Keychain\n")
+
 	// First, check $HOME/.docker/config.json
 	foundDockerConfig := false
 	home, err := homedir.Dir()
@@ -107,6 +110,8 @@ func (dk *defaultKeychain) Resolve(target Resource) (Authenticator, error) {
 			return nil, err
 		}
 	}
+
+	fmt.Printf("Using auth config: %s\n", cf.Filename)
 
 	// See:
 	// https://github.com/google/ko/issues/90

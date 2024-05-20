@@ -90,6 +90,7 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 				]}
 			*/
 
+			r.log.Printf("Generating %d repos to catalog", r.numCatalogRepos)
 			resp.Write([]byte("{ \"repositories\": [\n"))
 			for i := 0; i < r.numCatalogRepos; i++ {
 				resp.Write([]byte(fmt.Sprintf("   \"/repo/path%d\", \n", i)))

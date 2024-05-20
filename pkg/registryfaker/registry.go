@@ -75,7 +75,7 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 
 	resp.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
 
-	if isCatalog(req) {
+	if isCatalog(req) && (r.catalogDur > 0 || r.numCatalogRepos > 0) {
 		if r.catalogDur > 0 {
 			r.log.Printf("Catalog request, sleeping for %s", r.catalogDur)
 			time.Sleep(r.catalogDur)
@@ -97,8 +97,8 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 			}
 			resp.Write([]byte("   \"/repo/last\"\n"))
 			resp.Write([]byte(`]}`))
-			return nil
 		}
+		return nil
 	}
 
 	if req.URL.Path != "/v2/" && req.URL.Path != "/v2" {

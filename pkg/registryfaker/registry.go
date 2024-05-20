@@ -29,6 +29,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"time"
 )
 
 const (
@@ -41,6 +42,7 @@ type registry struct {
 	blobs            blobs
 	manifests        manifests
 	warnings         map[float64]string
+	catalogDur       time.Duration
 }
 
 // https://docs.docker.com/registry/spec/api/#api-version-check
@@ -64,9 +66,14 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 	// if isTags(req) {
 	// 	return r.manifests.handleTags(resp, req)
 	// }
-	// if isCatalog(req) {
-	// 	return r.manifests.handleCatalog(resp, req)
-	// }
+
+	if r.catalogDur > 0 {
+		if isCatalog(req) {
+			r.log.Printf("Catalog request, sleeping for %s", r.catalogDur)
+			time.Sleep(r.catalogDur)
+		}
+	}
+
 	// if r.referrersEnabled && isReferrers(req) {
 	// 	return r.manifests.handleReferrers(resp, req)
 	// }
@@ -96,16 +103,28 @@ func (r *registry) root(resp http.ResponseWriter, req *http.Request) {
 func New(opts ...Option) http.Handler {
 	blobHandler := &memHandler{m: map[string][]byte{}}
 
+	log := log.New(os.Stderr, "", log.LstdFlags)
+	var catalogDuration time.Duration
+	if v := os.Getenv("V2_CATALOG_DELAY"); v != "" {
+		dur, err := time.ParseDuration(v)
+		if err != nil {
+			log.Printf("Error parsing env V2_CATALOG_DELAY: %v", err)
+
+		} else {
+			catalogDuration = dur
+		}
+	}
+
 	r := &registry{
-		log: log.New(os.Stderr, "", log.LstdFlags),
+		log: log,
 		blobs: blobs{
 			blobHandler: blobHandler,
 			uploads:     map[string][]byte{},
-			log:         log.New(os.Stderr, "", log.LstdFlags),
+			log:         log,
 		},
 		manifests: manifests{
 			manifests:   map[string]map[string]manifest{},
-			log:         log.New(os.Stderr, "", log.LstdFlags),
+			log:         log,
 			blobHandler: blobHandler,
 			handlers: []manifestHandler{
 				&errorManifestHandler{Repo: fmt.Sprintf("%s/error", RepoPrefix)},
@@ -115,6 +134,7 @@ func New(opts ...Option) http.Handler {
 				&remoteManifestHandler{Repo: "*"}, // ALWAYS keep this handler last, it's a match any
 			},
 		},
+		catalogDur: catalogDuration,
 	}
 
 	for _, o := range opts {

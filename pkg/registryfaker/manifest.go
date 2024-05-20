@@ -70,15 +70,15 @@ func isManifest(req *http.Request) bool {
 // 	return elems[len(elems)-2] == "tags"
 // }
 
-// func isCatalog(req *http.Request) bool {
-// 	elems := strings.Split(req.URL.Path, "/")
-// 	elems = elems[1:]
-// 	if len(elems) < 2 {
-// 		return false
-// 	}
+func isCatalog(req *http.Request) bool {
+	elems := strings.Split(req.URL.Path, "/")
+	elems = elems[1:]
+	if len(elems) < 2 {
+		return false
+	}
 
-// 	return elems[len(elems)-1] == "_catalog"
-// }
+	return elems[len(elems)-1] == "_catalog"
+}
 
 // Returns whether this url should be handled by the referrers handler
 // func isReferrers(req *http.Request) bool {

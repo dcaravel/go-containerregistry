@@ -79,6 +79,10 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 		if r.catalogDur > 0 {
 			r.log.Printf("Catalog request, sleeping for %s", r.catalogDur)
 			time.Sleep(r.catalogDur)
+			if r.numCatalogRepos == 0 {
+				resp.Write([]byte(`{"repositories":[]}`))
+				return nil
+			}
 		}
 
 		if r.numCatalogRepos > 0 {

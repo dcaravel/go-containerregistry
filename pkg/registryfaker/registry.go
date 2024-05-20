@@ -29,6 +29,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -43,6 +44,7 @@ type registry struct {
 	manifests        manifests
 	warnings         map[float64]string
 	catalogDur       time.Duration
+	numCatalogRepos  int
 }
 
 // https://docs.docker.com/registry/spec/api/#api-version-check
@@ -67,17 +69,37 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 	// 	return r.manifests.handleTags(resp, req)
 	// }
 
-	if r.catalogDur > 0 {
-		if isCatalog(req) {
-			r.log.Printf("Catalog request, sleeping for %s", r.catalogDur)
-			time.Sleep(r.catalogDur)
-		}
-	}
-
 	// if r.referrersEnabled && isReferrers(req) {
 	// 	return r.manifests.handleReferrers(resp, req)
 	// }
+
 	resp.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
+
+	if isCatalog(req) {
+		if r.catalogDur > 0 {
+			r.log.Printf("Catalog request, sleeping for %s", r.catalogDur)
+			time.Sleep(r.catalogDur)
+		}
+
+		if r.numCatalogRepos > 0 {
+			/*
+				{ "repositories": [
+						"/repo/path0",
+						"/repo/path1",
+						"/repo/last"
+				]}
+			*/
+
+			resp.Write([]byte("{ \"repositories\": [\n"))
+			for i := 0; i < r.numCatalogRepos; i++ {
+				resp.Write([]byte(fmt.Sprintf("   \"/repo/path%d\", \n", i)))
+			}
+			resp.Write([]byte("   \"/repo/last\"\n"))
+			resp.Write([]byte(`]}`))
+			return nil
+		}
+	}
+
 	if req.URL.Path != "/v2/" && req.URL.Path != "/v2" {
 		return &regError{
 			Status:  http.StatusNotFound,
@@ -85,6 +107,7 @@ func (r *registry) v2(resp http.ResponseWriter, req *http.Request) *regError {
 			Message: "I don't understand your request + URL",
 		}
 	}
+
 	resp.WriteHeader(200)
 	return nil
 }
@@ -115,6 +138,16 @@ func New(opts ...Option) http.Handler {
 		}
 	}
 
+	var numCatalogRepos int
+	if v := os.Getenv("V2_CATALOG_NUM_REPOS"); v != "" {
+		num, err := strconv.Atoi(v)
+		if err != nil {
+			log.Printf("Error parsing env V2_CATALOG_NUM_REPOS: %v", err)
+		} else {
+			numCatalogRepos = num
+		}
+	}
+
 	r := &registry{
 		log: log,
 		blobs: blobs{
@@ -134,7 +167,8 @@ func New(opts ...Option) http.Handler {
 				&remoteManifestHandler{Repo: "*"}, // ALWAYS keep this handler last, it's a match any
 			},
 		},
-		catalogDur: catalogDuration,
+		catalogDur:      catalogDuration,
+		numCatalogRepos: numCatalogRepos,
 	}
 
 	for _, o := range opts {
